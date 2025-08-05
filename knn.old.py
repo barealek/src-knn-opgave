@@ -30,15 +30,17 @@ def knn_predict(train_data, test_data, k=3):
 def calculate_accuracy(predictions, true_labels):
     return np.mean(predictions == true_labels)
 
-# Example usage
 from data import train, test
 
 # Run classifier
-k = 3
-predictions, true_labels = knn_predict(train, test, k)
-accuracy = calculate_accuracy(predictions, true_labels)
+k = [1, 3, 5, 7, 9, 11]
+for i in range(len(k)):
+    print(f"k = {k[i]}")
+    predictions, true_labels = knn_predict(train, test, k[i])
+    accuracy = calculate_accuracy(predictions, true_labels)
+    print(f"Accuracy: {accuracy}")
 
 # Output
-print("Predictions:", predictions)
-print("True labels:", true_labels)
-print("Accuracy:", accuracy)
+# print("Predictions:", predictions)
+# print("True labels:", true_labels)
+# print("Accuracy:", accuracy)

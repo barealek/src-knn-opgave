@@ -1,6 +1,7 @@
 import numpy as np
 from collections import Counter
 import pandas as pd # It's good practice to import pandas if you expect DataFrames
+import math, random
 
 # Use the predefined num_features as requested
 num_features = 5 # Set this to the correct number of features for your data
@@ -13,11 +14,12 @@ def weighted_euclidean_distance_matrix(test_features, train_features, weights):
     """
     weights = np.array(weights)
     if weights.shape[0] != num_features:
-        raise ValueError(f"Weights array must have {num_features} elements, got {weights.shape[0]}.")
-    # These checks assume features are already extracted and are numpy arrays
+        raise ValueError(f"Der skal være {num_features} vægte, fik {weights.shape[0]}.")
+    # Features er et numpy array
     if test_features.shape[1] != num_features or train_features.shape[1] != num_features:
-        raise ValueError(f"Feature columns in test_features ({test_features.shape[1]}) or train_features ({train_features.shape[1]}) do not match num_features ({num_features}).")
+        raise ValueError(f"Feature kolonner i test eller train features matcher ikke num_features ({num_features}).")
 
+    # Beregn afstanden med numpy broadcasting og division med vægtene
     weighted_diff = (test_features[:, None, :] - train_features[None, :, :]) / weights[None, None, :]
     return np.sqrt((weighted_diff ** 2).sum(axis=2))
 
@@ -70,35 +72,92 @@ def knn_predict(train_data, query_data, k=3, weights=None):
 def calculate_accuracy(predictions, true_labels):
     return np.mean(predictions == true_labels)
 
-def optimize_weights_random_search(train_data_for_knn, validation_data_for_opt, k=3, num_trials=100, weight_range=(0.1, 10.0)):
+def optimize_weights_simulated_annealing(train_data_for_knn, validation_data_for_opt, k=3,
+                                        initial_weights=None, initial_temp=1.0, cooling_rate=0.95,
+                                        n_iterations=5000, step_size=0.1):
     """
-    Optimizes feature weights using random search on the validation_data_for_opt.
-    The kNN model itself is trained using train_data_for_knn for each trial.
+    Optimizes feature weights using a simulated annealing-inspired approach.
     """
-    best_weights = np.ones(num_features) # Assumes global num_features
+    num_features = train_data_for_knn.shape[1] - 1 if isinstance(train_data_for_knn, np.ndarray) else train_data_for_knn.shape[1] - 1
+    if initial_weights is None:
+        current_weights = np.random.uniform(0.1, 10.0, num_features)
+    else:
+        current_weights = np.array(initial_weights)
+
+    best_weights = np.copy(current_weights)
+    best_accuracy = calculate_accuracy(*knn_predict(train_data_for_knn, validation_data_for_opt, k, weights=best_weights))
+    current_accuracy = best_accuracy
+    temperature = initial_temp
+
+    print("Starting Simulated Annealing for weight optimization...")
+
+    for i in range(n_iterations):
+        # Generate a new set of weights by making small random adjustments
+        new_weights = current_weights + np.random.normal(0, step_size * temperature, num_features)
+        new_weights[new_weights <= 1e-6] = 1e-6 # Ensure weights remain positive
+
+        new_accuracy = calculate_accuracy(*knn_predict(train_data_for_knn, validation_data_for_opt, k, weights=new_weights))
+
+        # Calculate the change in accuracy
+        delta_accuracy = new_accuracy - current_accuracy
+
+        # Acceptance probability
+        if delta_accuracy > 0:
+            # Accept better solutions
+            current_accuracy = new_accuracy
+            current_weights = new_weights
+            if current_accuracy > best_accuracy:
+                best_accuracy = current_accuracy
+                best_weights = np.copy(current_weights)
+        else:
+            # Accept worse solutions with a probability based on temperature
+            probability = math.exp(delta_accuracy / temperature)
+            if random.random() < probability:
+                current_accuracy = new_accuracy
+                current_weights = new_weights
+
+        # Cool down the temperature
+        temperature *= cooling_rate
+
+        if (i + 1) % (max(1, n_iterations // 50)) == 0 or i == n_iterations - 1:
+            print(f"Iteration {i+1}/{n_iterations}: Temp: {temperature:.4f}, Current Accuracy: {current_accuracy:.4f}, Best Accuracy: {best_accuracy:.4f}")
+
+    print(f"Finished Simulated Annealing. Best accuracy on validation set: {best_accuracy:.4f}")
+    print(f"Best weights found: {best_weights}")
+    return best_weights, best_accuracy
+
+def optimize_weights_random_search(train_data_for_knn,
+                                   validation_data_for_opt,
+                                   k=3, num_trials=100,
+                                   weight_range=(0.1, 10.0)):
+
+    best_weights = np.ones(num_features) # Vi starter med et array af 1'ere
     best_accuracy = 0.0
 
     print(f"Starting random search for optimal weights ({num_trials} trials)...")
     for i in range(num_trials):
+        # Vi genererer tilfældige vægte inden for det angivne interval
         current_weights = np.random.uniform(weight_range[0], weight_range[1], num_features)
         current_weights[current_weights <= 1e-6] = 1e-6
 
-        # knn_predict can handle if train_data_for_knn and validation_data_for_opt are DataFrames or NumPy arrays
+        # Vi prøver at lave kNN-forespørgsler med den nye vægte
         predictions, true_labels = knn_predict(train_data_for_knn, validation_data_for_opt, k, weights=current_weights)
         accuracy = calculate_accuracy(predictions, true_labels)
 
+        # Vi tjekker om den nuværende vægtkombination er bedre end den bedste hidtil
         if accuracy > best_accuracy:
+            # Hvis accuracy er bedre, opdaterer vi den bedste vægt og den bedste nøjagtighed
             best_accuracy = accuracy
             best_weights = current_weights
-        # Adjusted print frequency for potentially shorter num_trials:
-        if (i + 1) % (max(1, num_trials // 10)) == 0 or i == num_trials -1 :
-            print(f"Trial {i+1}/{num_trials}: Weights: {current_weights}, Accuracy: {accuracy:.4f}")
+
+        # Print status for hver 10% af trials
+        if (i + 1) % (num_trials // 10) == 0 or i == num_trials -1 :
             print(f"Trial {i+1}/{num_trials} processed. Current best accuracy on validation: {best_accuracy:.4f}")
 
+    # Print den bedste vægt og den bedste nøjagtighed
     print(f"Finished random search. Best accuracy on validation set: {best_accuracy:.4f}")
     return best_weights, best_accuracy
 
-# --- Example Usage ---
 if __name__ == "__main__":
     print(f"Using predefined number of features (num_features): {num_features}")
 
@@ -112,17 +171,14 @@ if __name__ == "__main__":
         from data import train as train_dataset_orig, validation as validation_dataset_orig, test as test_dataset_orig
         print("Successfully loaded train, validation, and test datasets from 'data' module.")
 
-        # If you want to ensure they are DataFrames for this example based on the error:
-        # This is just for clarity if 'data' module could return either.
-        # If you know 'data' returns DataFrames, this explicit conversion isn't strictly needed
-        # but makes the type explicit.
+        # Vi dobbelttjekker lige, at dataen er i det rigtige format
         train_dataset = pd.DataFrame(train_dataset_orig)
         validation_dataset = pd.DataFrame(validation_dataset_orig)
         test_dataset = pd.DataFrame(test_dataset_orig)
 
 
+        # Vi tjekker at dataen er den rigtige størrelse
         min_cols_required = num_features + 1
-        # shape[1] works for both DataFrames and NumPy arrays
         if train_dataset.shape[1] < min_cols_required:
             raise ValueError(f"Train data has {train_dataset.shape[1]} columns, but num_features={num_features} requires at least {min_cols_required} columns (features + label).")
         if validation_dataset.shape[1] < min_cols_required:
@@ -140,7 +196,7 @@ if __name__ == "__main__":
 
 
     if train_dataset is not None and validation_dataset is not None and test_dataset is not None:
-        k_val = 5
+        k_val = 7
 
         print("\n--- kNN with default weights (on TEST set) ---")
         predictions_default, true_labels_default = knn_predict(train_dataset, test_dataset, k=k_val)
@@ -150,12 +206,13 @@ if __name__ == "__main__":
         print(f"Accuracy on TEST set (default weights): {accuracy_default:.4f}")
 
         print("\n--- Optimizing weights (using TRAIN and VALIDATION sets) ---")
-        optimized_weights, best_val_accuracy = optimize_weights_random_search(
+        optimized_weights, best_val_accuracy = optimize_weights_simulated_annealing(
             train_dataset,
             validation_dataset,
             k=k_val,
-            num_trials=5000, # Original value
-            weight_range=(0.1, 10)
+            n_iterations=10000,
+            initial_temp=3,
+            cooling_rate=.9995,
         )
         print(f"\nOptimized weights found: {optimized_weights} (achieved {best_val_accuracy:.4f} on VALIDATION set)")
 
@@ -169,7 +226,11 @@ if __name__ == "__main__":
 
         # Append the weights and the accuracy to the results file
         with open("results.txt", "a") as f:
-            f.write(f"Optimized weights: {optimized_weights}, Accuracy: {accuracy_optimized:.4f}\n")
+            f.write(f"Optimized weights: {optimized_weights}, Accuracy: {accuracy_optimized:.4f}  Acc. no weights: {accuracy_default:.4f}")
+            if accuracy_optimized > accuracy_default:
+                f.write(" (Optimized weights improved accuracy)\n")
+            else:
+                f.write(" (Optimized weights did not improve accuracy)\n")
         print("\n--- Results saved to results.txt ---")
 
         if accuracy_optimized > accuracy_default:
